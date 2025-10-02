@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FinTech Forecasting Application - CS4063</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Header Section -->
+        <header class="header">
+            <div class="header-content">
+                <div class="header-left">
+                    <div class="logo">
+                        <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+                            <rect width="40" height="40" rx="8" fill="url(#gradient)"/>
+                            <path d="M10 25L15 18L20 22L30 10" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                            <circle cx="30" cy="10" r="2" fill="white"/>
+                            <defs>
+                                <linearGradient id="gradient" x1="0" y1="0" x2="40" y2="40">
+                                    <stop offset="0%" style="stop-color:#667eea"/>
+                                    <stop offset="100%" style="stop-color:#764ba2"/>
+                                </linearGradient>
+                            </defs>
+                        </svg>
+                    </div>
+                    <div class="header-text">
+                        <h1>FinTech Forecasting</h1>
+                        <p class="subtitle">AI-Powered Stock & Crypto Price Prediction</p>
+                    </div>
+                </div>
+                <div class="header-right">
+                    <div class="status-indicator">
+                        <div class="status-dot"></div>
+                        <span id="status-text">Ready</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content Grid -->
+        <div class="main-grid">
+            <!-- Left Sidebar - Controls -->
+            <aside class="sidebar">
+                <div class="card">
+                    <h3 class="card-title">Configuration</h3>
+                    
+                    <div class="control-group">
+                        <label for="symbol-select">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                                <path d="M2 8h4v6H2V8zm5-6h4v12H7V2zm5 4h4v8h-4V6z"/>
+                            </svg>
+                            Financial Instrument
+                        </label>
+                        <select id="symbol-select" class="form-select">
+                            <option value="">-- Select Symbol --</option>
+                        </select>
+                        <small>Available: AAPL, MSFT, BTC-USD</small>
+                    </div>
+
+                    <div class="control-group">
+                        <label for="model-select">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                                <path d="M8 2a.5.5 0 01.5.5v11a.5.5 0 01-1 0v-11A.5.5 0 018 2z"/>
+                                <path d="M3 7a.5.5 0 01.5-.5h9a.5.5 0 010 1h-9A.5.5 0 013 7z"/>
+                            </svg>
+                            Forecasting Model
+                        </label>
+                        <select id="model-select" class="form-select">
+                            <optgroup label="📊 Traditional Models">
+                                <option value="ma_5">Moving Average (5-day)</option>
+                                <option value="ma_10">Moving Average (10-day)</option>
+                                <option value="arima" selected>ARIMA (5,1,0)</option>
+                                <option value="exp_smooth">Exponential Smoothing</option>
+                            </optgroup>
+                            <optgroup label="🧠 Neural Networks">
+                                <option value="lstm">LSTM Network</option>
+                                <option value="gru">GRU Network</option>
+                            </optgroup>
+                        </select>
+                    </div>
+
+                    <div class="control-group">
+                        <label for="horizon-select">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                                <path d="M8 15A7 7 0 118 1a7 7 0 010 14zm0 1A8 8 0 108 0a8 8 0 000 16z"/>
+                                <path d="M8 4a.5.5 0 01.5.5v3h3a.5.5 0 010 1h-3.5a.5.5 0 01-.5-.5v-4A.5.5 0 018 4z"/>
+                            </svg>
+                            Forecast Horizon
+                        </label>
+                        <select id="horizon-select" class="form-select">
+                            <option value="1">1 hour ahead</option>
+                            <option value="3">3 hours ahead</option>
+                            <option value="24" selected>24 hours (1 day)</option>
+                            <option value="72">72 hours (3 days)</option>
+                            <option value="120">120 hours (5 days)</option>
+                        </select>
+                    </div>
+
+                    <div class="button-group">
+                        <button id="forecast-btn" class="btn btn-primary">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                                <path d="M10.97 4.97a.75.75 0 011.07 1.05l-3.99 4.99a.75.75 0 01-1.08.02L4.324 8.384a.75.75 0 111.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 01.02-.022z"/>
+                            </svg>
+                            Generate Forecast
+                        </button>
+                        <button id="evaluate-btn" class="btn btn-secondary">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                                <path d="M1 2.5A1.5 1.5 0 012.5 1h3A1.5 1.5 0 017 2.5v3A1.5 1.5 0 015.5 7h-3A1.5 1.5 0 011 5.5v-3zm8 0A1.5 1.5 0 0110.5 1h3A1.5 1.5 0 0115 2.5v3A1.5 1.5 0 0113.5 7h-3A1.5 1.5 0 019 5.5v-3zm-8 8A1.5 1.5 0 012.5 9h3A1.5 1.5 0 017 10.5v3A1.5 1.5 0 015.5 15h-3A1.5 1.5 0 011 13.5v-3zm8 0A1.5 1.5 0 0110.5 9h3a1.5 1.5 0 011.5 1.5v3a1.5 1.5 0 01-1.5 1.5h-3A1.5 1.5 0 019 13.5v-3z"/>
+                            </svg>
+                            Compare Models
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Quick Stats -->
+                <div class="card stats-card">
+                    <h3 class="card-title">Quick Stats</h3>
+                    <div id="quick-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Current Price</span>
+                            <span class="stat-value" id="current-price">--</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">24h Change</span>
+                            <span class="stat-value" id="price-change">--</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Volume</span>
+                            <span class="stat-value" id="volume">--</span>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Main Content - Chart -->
+            <main class="main-content">
+                <div id="alert-container"></div>
+                
+                <div id="loading" class="loading" style="display: none;">
+                    <div class="spinner"></div>
+                    <p>Processing your request...</p>
+                </div>
+
+                <div class="card chart-card">
+                    <div class="chart-header">
+                        <h3 id="chart-title">Price Chart & Forecast</h3>
+                        <div class="chart-controls">
+                            <button class="btn-icon" id="refresh-btn" title="Refresh Data">
+                                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                                    <path d="M11.534 7h3.932a.25.25 0 01.192.41l-1.966 2.36a.25.25 0 01-.384 0l-1.966-2.36a.25.25 0 01.192-.41zm-11 2h3.932a.25.25 0 00.192-.41L2.692 6.23a.25.25 0 00-.384 0L.342 8.59A.25.25 0 00.534 9z"/>
+                                    <path fill-rule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 11-.771-.636A6.002 6.002 0 0113.917 7H12.9A5.002 5.002 0 008 3zM3.1 9a5.002 5.002 0 008.757 2.182.5.5 0 11.771.636A6.002 6.002 0 012.083 9H3.1z"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="candlestick-chart"></div>
+                </div>
+
+                <div id="metrics-container" class="card" style="display: none;">
+                    <h3 class="card-title">Model Performance Comparison</h3>
+                    <div class="table-responsive">
+                        <table id="metrics-table">
+                            <thead>
+                                <tr>
+                                    <th>Model Name</th>
+                                    <th>Type</th>
+                                    <th>RMSE ↓</th>
+                                    <th>MAE ↓</th>
+                                    <th>MAPE (%) ↓</th>
+                                    <th>Train Size</th>
+                                    <th>Test Size</th>
+                                </tr>
+                            </thead>
+                            <tbody id="metrics-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </main>
+        </div>
+
+        <footer class="footer">
+            <div class="footer-content">
+                <div class="footer-left">
+                    <p><strong>CS4063</strong> - Natural Language Processing</p>
+                    <p>Stock/Crypto/ForEx Forecasting Assignment</p>
+                </div>
+                <div class="footer-right">
+                    <p>Muhammad Abdullah Khan</p>
+                    <p><strong>22i2604</strong></p>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
+

@@ -5,14 +5,23 @@ Data loading utilities for importing CSV data into the database.
 import sys
 import os
 import pandas as pd
+from typing import Any
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv('config.env')
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database.models import Database
+from database.models import Database as SqliteDatabase
+try:
+    from database.mongo_db import MongoDatabase
+except Exception:
+    MongoDatabase = None
 
 
-def load_csv_data(csv_path: str, symbol: str, db: Database):
+def load_csv_data(csv_path: str, symbol: str, db: Any):
     """
     Load price data from CSV file into database.
     
@@ -49,7 +58,7 @@ def load_csv_data(csv_path: str, symbol: str, db: Database):
         print(f"[ERROR] Error loading {csv_path}: {e}")
 
 
-def load_sentiment_data(csv_path: str, symbol: str, db: Database):
+def load_sentiment_data(csv_path: str, symbol: str, db: Any):
     """
     Load sentiment data from dataset CSV into database.
     
@@ -91,19 +100,42 @@ def load_sentiment_data(csv_path: str, symbol: str, db: Database):
         print(f"[ERROR] Error loading sentiment from {csv_path}: {e}")
 
 
-def load_all_data(data_dir: str = "../../output"):
+def _select_db():
+    use_mongo = os.environ.get('USE_MONGO', '0') == '1'
+    mongo_uri = os.environ.get('MONGO_URI')
+    if use_mongo and mongo_uri and MongoDatabase is not None:
+        return MongoDatabase(mongo_uri)
+    return SqliteDatabase()
+
+
+def load_all_data(data_dir: str = None):
     """
     Load all available data from the output directory.
     
     Args:
-        data_dir: Directory containing CSV files (default: ../../output from utils/)
+        data_dir: Optional override directory containing CSV files.
     """
-    db = Database()
+    db = _select_db()
     
-    # Get script directory and go to project root
+    # Resolve data directory candidates relative to this file
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    data_path = os.path.join(script_dir, data_dir)
-    data_path = os.path.normpath(data_path)
+    candidate_dirs = []
+    
+    if data_dir:
+        candidate_dirs.append(data_dir)
+    candidate_dirs.extend(['../output', '../../output', '../../../output'])
+    
+    data_path = None
+    for candidate in candidate_dirs:
+        candidate_path = os.path.normpath(os.path.join(script_dir, candidate))
+        if os.path.isdir(candidate_path):
+            data_path = candidate_path
+            break
+    
+    if data_path is None:
+        raise FileNotFoundError(
+            f"Could not locate data directory. Checked: {', '.join(candidate_dirs)}"
+        )
     
     # List of symbols to load
     symbols = ['AAPL', 'MSFT', 'BTC-USD']
@@ -111,6 +143,7 @@ def load_all_data(data_dir: str = "../../output"):
     print("=" * 60)
     print("Loading data into database...")
     print("=" * 60)
+    print(f"Source directory: {data_path}")
     
     for symbol in symbols:
         print(f"\nProcessing {symbol}...")
@@ -140,4 +173,5 @@ def load_all_data(data_dir: str = "../../output"):
 
 if __name__ == "__main__":
     load_all_data()
+
 

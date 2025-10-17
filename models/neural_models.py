@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Tuple, Optional
 import warnings
+import os
 warnings.filterwarnings('ignore')
 
 # Try to import TensorFlow/Keras
@@ -19,6 +20,9 @@ try:
 except ImportError:
     KERAS_AVAILABLE = False
     print("Warning: TensorFlow not available. Neural models will not work.")
+
+DEFAULT_EPOCHS = max(10, int(os.environ.get('NEURAL_EPOCHS', '30')))
+DEFAULT_PATIENCE = max(3, int(os.environ.get('NEURAL_PATIENCE', '5')))
 
 
 def create_sequences(data: np.ndarray, lookback: int) -> Tuple[np.ndarray, np.ndarray]:
@@ -61,6 +65,9 @@ class LSTMModel:
         self.scaler_mean = None
         self.scaler_std = None
         self.name = f"LSTM_{units}"
+        self.max_epochs = DEFAULT_EPOCHS
+        self.patience = DEFAULT_PATIENCE
+        self.last_history = None
     
     def _normalize(self, data: np.ndarray) -> np.ndarray:
         """Normalize data using z-score normalization."""
@@ -86,7 +93,7 @@ class LSTMModel:
         model.compile(optimizer='adam', loss='mse', metrics=['mae'])
         return model
     
-    def fit(self, data: np.ndarray, epochs: int = 50, batch_size: int = 32, verbose: int = 0):
+    def fit(self, data: np.ndarray, epochs: Optional[int] = None, batch_size: int = 32, verbose: int = 0):
         """
         Train LSTM model.
         
@@ -96,8 +103,16 @@ class LSTMModel:
             batch_size: Batch size for training
             verbose: Verbosity level
         """
-        # Normalize data
-        normalized_data = self._normalize(data)
+        data = np.asarray(data, dtype=float)
+        
+        if len(data) < self.lookback:
+            raise ValueError(f"Need at least {self.lookback} observations for prediction")
+        
+        # Normalize data using training statistics when available
+        if self.scaler_mean is None or self.scaler_std is None:
+            normalized_data = self._normalize(data)
+        else:
+            normalized_data = (data - self.scaler_mean) / (self.scaler_std + 1e-8)
         
         # Create sequences
         X, y = create_sequences(normalized_data, self.lookback)
@@ -107,10 +122,12 @@ class LSTMModel:
         self.model = self.build_model()
         
         # Early stopping
-        early_stop = EarlyStopping(monitor='loss', patience=10, restore_best_weights=True)
+        epochs = epochs if epochs is not None else self.max_epochs
+        patience = min(self.patience, max(1, epochs // 4))
+        early_stop = EarlyStopping(monitor='loss', patience=patience, restore_best_weights=True)
         
         # Train model
-        self.model.fit(
+        self.last_history = self.model.fit(
             X, y,
             epochs=epochs,
             batch_size=batch_size,
@@ -133,8 +150,15 @@ class LSTMModel:
         if self.model is None:
             raise ValueError("Model must be fitted before prediction")
         
-        # Normalize data
-        normalized_data = self._normalize(data)
+        data = np.asarray(data, dtype=float)
+        
+        if len(data) < self.lookback:
+            raise ValueError(f"Need at least {self.lookback} observations for prediction")
+        
+        if self.scaler_mean is None or self.scaler_std is None:
+            normalized_data = self._normalize(data)
+        else:
+            normalized_data = (data - self.scaler_mean) / (self.scaler_std + 1e-8)
         
         predictions = []
         current_sequence = normalized_data[-self.lookback:].copy()
@@ -170,7 +194,7 @@ class LSTMModel:
         Returns:
             Dictionary of metrics (RMSE, MAE, MAPE)
         """
-        self.fit(train, epochs=50, verbose=0)
+        self.fit(train, epochs=self.max_epochs, verbose=0)
         
         # Use last lookback points from train for context
         context = train[-self.lookback:]
@@ -216,6 +240,9 @@ class GRUModel:
         self.scaler_mean = None
         self.scaler_std = None
         self.name = f"GRU_{units}"
+        self.max_epochs = DEFAULT_EPOCHS
+        self.patience = DEFAULT_PATIENCE
+        self.last_history = None
     
     def _normalize(self, data: np.ndarray) -> np.ndarray:
         """Normalize data using z-score normalization."""
@@ -241,7 +268,7 @@ class GRUModel:
         model.compile(optimizer='adam', loss='mse', metrics=['mae'])
         return model
     
-    def fit(self, data: np.ndarray, epochs: int = 50, batch_size: int = 32, verbose: int = 0):
+    def fit(self, data: np.ndarray, epochs: Optional[int] = None, batch_size: int = 32, verbose: int = 0):
         """
         Train GRU model.
         
@@ -262,10 +289,12 @@ class GRUModel:
         self.model = self.build_model()
         
         # Early stopping
-        early_stop = EarlyStopping(monitor='loss', patience=10, restore_best_weights=True)
+        epochs = epochs if epochs is not None else self.max_epochs
+        patience = min(self.patience, max(1, epochs // 4))
+        early_stop = EarlyStopping(monitor='loss', patience=patience, restore_best_weights=True)
         
         # Train model
-        self.model.fit(
+        self.last_history = self.model.fit(
             X, y,
             epochs=epochs,
             batch_size=batch_size,
@@ -325,7 +354,7 @@ class GRUModel:
         Returns:
             Dictionary of metrics (RMSE, MAE, MAPE)
         """
-        self.fit(train, epochs=50, verbose=0)
+        self.fit(train, epochs=self.max_epochs, verbose=0)
         
         # Use last lookback points from train for context
         context = train[-self.lookback:]

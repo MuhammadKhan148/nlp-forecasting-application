@@ -13,7 +13,7 @@ import os
 class Database:
     """Database manager for financial data and forecasts."""
     
-    def __init__(self, db_path: str = "assignment2/database/fintech.db"):
+    def __init__(self, db_path: str = "database/fintech.db"):
         """Initialize database connection."""
         self.db_path = db_path
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
@@ -216,10 +216,10 @@ class Database:
                 model_name,
                 forecast_date,
                 horizon_hours,
-                predictions.get('open'),
-                predictions.get('high'),
-                predictions.get('low'),
-                predictions.get('close'),
+                predictions.get('predicted_open') or predictions.get('open'),
+                predictions.get('predicted_high') or predictions.get('high'),
+                predictions.get('predicted_low') or predictions.get('low'),
+                predictions.get('predicted_close') or predictions.get('close'),
                 predictions.get('confidence_lower'),
                 predictions.get('confidence_upper')
             ))

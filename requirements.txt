@@ -19,6 +19,8 @@ keras==2.15.0
 
 # Database
 # SQLite is included with Python, no additional package needed
+pymongo==4.6.1
+python-dotenv==1.0.0
 
 # Utilities
 python-dateutil==2.9.0.post0

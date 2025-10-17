@@ -143,8 +143,19 @@ class ARIMAModel:
         conf_int = forecast_obj.conf_int()
         
         predictions = np.array(forecast_result)
-        # Calculate width of confidence interval
-        confidence = (conf_int.iloc[:, 1] - conf_int.iloc[:, 0]).mean() / 2
+        # Calculate width of confidence interval robustly across statsmodels versions
+        try:
+            if hasattr(conf_int, 'to_numpy'):
+                arr = conf_int.to_numpy()
+            elif hasattr(conf_int, 'values'):
+                arr = conf_int.values
+            else:
+                arr = np.asarray(conf_int)
+            confidence = float(np.mean(arr[:, 1] - arr[:, 0]) / 2.0)
+        except Exception:
+            # fallback based on residual std dev
+            residuals = getattr(self.fitted_model, 'resid', np.array([0.0]))
+            confidence = float(np.std(residuals) * 1.96)
         
         return predictions, float(confidence)
     

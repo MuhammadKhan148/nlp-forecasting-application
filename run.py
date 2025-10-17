@@ -7,6 +7,7 @@ This script handles initial setup and starts the Flask server.
 import os
 import sys
 from pathlib import Path
+from dotenv import load_dotenv
 
 def check_database():
     """Check if database exists and has data."""
@@ -14,7 +15,7 @@ def check_database():
     
     if not db_path.exists():
         print("\n" + "=" * 60)
-        print("⚠️  DATABASE NOT FOUND")
+        print("[WARN] DATABASE NOT FOUND")
         print("=" * 60)
         print("\nPlease run the data loader first:")
         print("  python utils/data_loader.py")
@@ -29,7 +30,7 @@ def check_database():
             print("\nLoading data...")
             from utils.data_loader import load_all_data
             load_all_data()
-            print("\n✓ Data loading complete!")
+            print("\n[OK] Data loading complete!")
         else:
             print("\nExiting. Please run data loader manually.")
             sys.exit(0)
@@ -41,13 +42,13 @@ def check_database():
         
         if not symbols:
             print("\n" + "=" * 60)
-            print("⚠️  DATABASE IS EMPTY")
+            print("[WARN] DATABASE IS EMPTY")
             print("=" * 60)
             print("\nLoading data from CSV files...")
             from utils.data_loader import load_all_data
             load_all_data()
         else:
-            print(f"\n✓ Database ready with {len(symbols)} symbols: {', '.join(symbols)}")
+            print(f"\n[OK] Database ready with {len(symbols)} symbols: {', '.join(symbols)}")
 
 
 def check_dependencies():
@@ -76,7 +77,7 @@ def check_dependencies():
     
     if missing:
         print("\n" + "=" * 60)
-        print("⚠️  MISSING DEPENDENCIES")
+        print("[WARN] MISSING DEPENDENCIES")
         print("=" * 60)
         print("\nThe following packages are required but not installed:")
         for pkg in missing:
@@ -89,13 +90,14 @@ def check_dependencies():
     # Check optional dependencies
     try:
         import tensorflow
-        print("✓ TensorFlow available - Neural models enabled")
+        print("[OK] TensorFlow available - Neural models enabled")
     except ImportError:
-        print("⚠️  TensorFlow not available - Only traditional models will work")
+        print("[WARN] TensorFlow not available - Only traditional models will work")
 
 
 def main():
     """Main entry point."""
+    load_dotenv('config.env')
     print("\n" + "=" * 60)
     print("  FinTech Forecasting Application")
     print("  CS4063 - Assignment 2")
@@ -113,20 +115,21 @@ def main():
     print("\n" + "=" * 60)
     print("Starting Flask server...")
     print("=" * 60)
-    print("\n🚀 Application will be available at:")
+    print("\n[INFO] Application will be available at:")
     print("   http://localhost:5000")
-    print("\n📊 Available features:")
+    print("\n[INFO] Available features:")
     print("   - Select financial instrument (AAPL, MSFT, BTC-USD)")
     print("   - Choose forecasting model (Traditional/Neural)")
     print("   - Set forecast horizon (1hr - 120hrs)")
     print("   - View interactive candlestick charts")
     print("   - Compare model performance")
-    print("\n💡 Press Ctrl+C to stop the server")
+    print("\n[INFO] Press Ctrl+C to stop the server")
     print("=" * 60 + "\n")
     
     # Import and run Flask app
     from app.app import app
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(debug=True, host='0.0.0.0', port=port)
 
 
 if __name__ == "__main__":
@@ -138,7 +141,7 @@ if __name__ == "__main__":
         print("=" * 60)
         sys.exit(0)
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"\n[ERROR] {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

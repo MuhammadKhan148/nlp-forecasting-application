@@ -4,8 +4,133 @@ let currentSymbol = '';
 let historicalData = [];
 let forecastData = [];
 
+function normalizeForecastEntries(entries) {
+    if (!Array.isArray(entries)) {
+        return [];
+    }
+    const normalizedEntries = entries.map((entry) => {
+        const normalized = { ...entry };
+        const openKey = normalized.predicted_open === undefined ? 'open' : null;
+        const highKey = normalized.predicted_high === undefined ? 'high' : null;
+        const lowKey = normalized.predicted_low === undefined ? 'low' : null;
+        const closeKey = normalized.predicted_close === undefined ? 'close' : null;
+
+        if (openKey && normalized[openKey] !== undefined) {
+            normalized.predicted_open = Number(normalized[openKey]);
+        }
+        if (highKey && normalized[highKey] !== undefined) {
+            normalized.predicted_high = Number(normalized[highKey]);
+        }
+        if (lowKey && normalized[lowKey] !== undefined) {
+            normalized.predicted_low = Number(normalized[lowKey]);
+        }
+        if (closeKey && normalized[closeKey] !== undefined) {
+            normalized.predicted_close = Number(normalized[closeKey]);
+        }
+
+        // Ensure numeric types
+        ['predicted_open', 'predicted_high', 'predicted_low', 'predicted_close', 'confidence_lower', 'confidence_upper', 'horizon_hours', 'step_hours']
+            .forEach((key) => {
+                if (normalized[key] !== undefined) {
+                    const value = Number(normalized[key]);
+                    normalized[key] = Number.isNaN(value) ? undefined : value;
+                }
+            });
+
+        // Derive step_hours if missing
+        if (normalized.step_hours === undefined && normalized.horizon_hours !== undefined) {
+            const total = Number(normalized.horizon_hours);
+            normalized.step_hours = entries.length > 0 ? total / entries.length : total;
+        }
+
+        return normalized;
+    });
+
+    return normalizedEntries.sort((a, b) => {
+        const aTime = new Date(a.date).getTime();
+        const bTime = new Date(b.date).getTime();
+        if (Number.isNaN(aTime) || Number.isNaN(bTime)) {
+            return 0;
+        }
+        return aTime - bTime;
+    });
+}
+
+function prettifyModelLabel(rawName) {
+    if (!rawName) {
+        return 'Unknown';
+    }
+    const name = String(rawName).trim();
+    if (!name) {
+        return 'Unknown';
+    }
+
+    const normalized = name.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+
+    if (/^ma[\s_-]*\d+/i.test(normalized)) {
+        const window = normalized.match(/\d+/);
+        return window ? `Moving Average (${window[0]})` : 'Moving Average';
+    }
+    if (/^arima/i.test(normalized)) {
+        return normalized.toUpperCase();
+    }
+    if (/^exp/i.test(normalized)) {
+        return 'Exponential Smoothing';
+    }
+    if (/^lstm/i.test(normalized)) {
+        return normalized.toUpperCase();
+    }
+    if (/^gru/i.test(normalized)) {
+        return normalized.toUpperCase();
+    }
+
+    return normalized.replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatModelName(details) {
+    if (!details) {
+        return 'Unknown';
+    }
+    if (typeof details === 'string') {
+        return prettifyModelLabel(details);
+    }
+
+    if (details.display_name) {
+        return details.display_name;
+    }
+    if (details.model_name) {
+        return prettifyModelLabel(details.model_name);
+    }
+
+    const params = details.parameters || {};
+    if (params.window) {
+        return `Moving Average (${params.window})`;
+    }
+    if (params.order) {
+        const order = Array.isArray(params.order) ? params.order.join(', ') : params.order;
+        return `ARIMA (${order})`;
+    }
+    if (params.trend) {
+        return `Exponential Smoothing (${params.trend})`;
+    }
+    if (params.lookback) {
+        const units = params.units ? `, units ${params.units}` : '';
+        return `Neural (${params.lookback}-step${units})`;
+    }
+
+    return details.model_type === 'neural' ? 'Neural Model' : 'Traditional Model';
+}
+
+function formatMetric(value, digits = 4) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) {
+        return '--';
+    }
+    return Number(value).toFixed(digits);
+}
+
 // Initialize application
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
+    loadModels();
     loadSymbols();
     setupEventListeners();
     updateStatus('Ready', 'success');
@@ -15,9 +140,9 @@ document.addEventListener('DOMContentLoaded', function() {
 function updateStatus(message, type = 'info') {
     const statusText = document.getElementById('status-text');
     const statusDot = document.querySelector('.status-dot');
-    
+
     statusText.textContent = message;
-    
+
     // Update dot color
     statusDot.style.background = {
         'success': '#10b981',
@@ -32,9 +157,11 @@ async function loadSymbols() {
     try {
         const response = await fetch('/api/symbols');
         const data = await response.json();
-        
+
         const symbolSelect = document.getElementById('symbol-select');
-        
+        symbolSelect.innerHTML = '<option value="">-- Select Symbol --</option>';
+        currentSymbol = '';
+
         if (data.symbols && data.symbols.length > 0) {
             data.symbols.forEach(symbol => {
                 const option = document.createElement('option');
@@ -42,7 +169,7 @@ async function loadSymbols() {
                 option.textContent = symbol;
                 symbolSelect.appendChild(option);
             });
-            
+
             // Auto-select first symbol and load data
             if (data.symbols.length > 0) {
                 symbolSelect.value = data.symbols[0];
@@ -56,16 +183,69 @@ async function loadSymbols() {
     }
 }
 
+async function loadModels() {
+    try {
+        const response = await fetch('/api/models');
+        const data = await response.json();
+        const select = document.getElementById('model-select');
+        const hint = document.getElementById('model-hint');
+
+        if (!select) {
+            return;
+        }
+
+        select.innerHTML = '';
+
+        const addGroup = (label, modelNames) => {
+            if (!Array.isArray(modelNames) || modelNames.length === 0) {
+                return;
+            }
+            const group = document.createElement('optgroup');
+            group.label = label;
+            modelNames.forEach((name) => {
+                const option = document.createElement('option');
+                option.value = name;
+                option.textContent = prettifyModelLabel(name);
+                group.appendChild(option);
+            });
+            select.appendChild(group);
+        };
+
+        addGroup('Traditional Models', data.traditional || []);
+        addGroup('Neural Networks', data.neural || []);
+
+        if (select.options.length > 0) {
+            select.selectedIndex = 0;
+        } else {
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = 'No models available';
+            select.appendChild(placeholder);
+        }
+
+        if (hint) {
+            if (data.neural && data.neural.length > 0) {
+                hint.textContent = 'Neural models powered by TensorFlow; expect longer runtimes.';
+            } else {
+                hint.textContent = 'Neural models unavailable. Install TensorFlow to enable LSTM/GRU forecasts.';
+            }
+        }
+    } catch (error) {
+        showAlert('Failed to load models: ' + error.message, 'error');
+        updateStatus('Error loading models', 'error');
+    }
+}
+
 // Setup event listeners
 function setupEventListeners() {
-    document.getElementById('symbol-select').addEventListener('change', function(e) {
+    document.getElementById('symbol-select').addEventListener('change', function (e) {
         currentSymbol = e.target.value;
         if (currentSymbol) {
             loadHistoricalData(currentSymbol);
             document.getElementById('metrics-container').style.display = 'none';
         }
     });
-    
+
     document.getElementById('forecast-btn').addEventListener('click', generateForecast);
     document.getElementById('evaluate-btn').addEventListener('click', evaluateModels);
     document.getElementById('refresh-btn').addEventListener('click', () => {
@@ -80,23 +260,23 @@ async function loadHistoricalData(symbol) {
     try {
         showLoading(true);
         updateStatus('Loading data...', 'info');
-        
+
         const response = await fetch(`/api/historical/${symbol}`);
         const result = await response.json();
-        
+
         if (result.error) {
             showAlert(result.error, 'error');
             updateStatus('Error', 'error');
             return;
         }
-        
+
         historicalData = result.data;
         renderCandlestickChart(historicalData, [], symbol);
         updateQuickStats(historicalData);
-        
+
         showAlert(`Loaded ${result.data.length} days of data for ${symbol}`, 'success');
         updateStatus('Data loaded', 'success');
-        
+
         showLoading(false);
     } catch (error) {
         showAlert('Failed to load historical data: ' + error.message, 'error');
@@ -111,15 +291,15 @@ async function generateForecast() {
         showAlert('Please select a symbol first', 'warning');
         return;
     }
-    
+
     const model = document.getElementById('model-select').value;
     const horizonHours = parseInt(document.getElementById('horizon-select').value);
-    
+
     try {
         showLoading(true);
         updateStatus('Generating forecast...', 'info');
         document.getElementById('forecast-btn').disabled = true;
-        
+
         const response = await fetch('/api/forecast', {
             method: 'POST',
             headers: {
@@ -131,21 +311,25 @@ async function generateForecast() {
                 horizon_hours: horizonHours
             })
         });
-        
+
         const result = await response.json();
-        
+
         if (result.error) {
             showAlert(result.error, 'error');
             updateStatus('Forecast failed', 'error');
             return;
         }
-        
-        forecastData = result.forecasts;
-        renderCandlestickChart(historicalData, forecastData, currentSymbol, result.model);
-        
-        showAlert(`Forecast generated using ${result.model}`, 'success');
-        updateStatus('Forecast ready', 'success');
-        
+
+        forecastData = normalizeForecastEntries(result.forecasts);
+        const modelLabel = formatModelName(result.model);
+        renderCandlestickChart(historicalData, forecastData, currentSymbol, modelLabel);
+
+        const horizonLabel = forecastData.length > 0 && forecastData[forecastData.length - 1].horizon_hours
+            ? `${forecastData[forecastData.length - 1].horizon_hours}h`
+            : `${horizonHours}h`;
+        showAlert(`Forecast generated using ${modelLabel} | Horizon ${horizonLabel}`, 'success');
+        updateStatus(`Forecast ready (${modelLabel})`, 'success');
+
         showLoading(false);
     } catch (error) {
         showAlert('Failed to generate forecast: ' + error.message, 'error');
@@ -162,12 +346,12 @@ async function evaluateModels() {
         showAlert('Please select a symbol first', 'warning');
         return;
     }
-    
+
     try {
         showLoading(true);
         updateStatus('Evaluating models...', 'info');
         document.getElementById('evaluate-btn').disabled = true;
-        
+
         const response = await fetch('/api/evaluate', {
             method: 'POST',
             headers: {
@@ -178,20 +362,29 @@ async function evaluateModels() {
                 test_size: 5
             })
         });
-        
+
         const result = await response.json();
-        
+
         if (result.error) {
             showAlert(result.error, 'error');
             updateStatus('Evaluation failed', 'error');
             return;
         }
-        
-        displayMetrics(result.results);
-        showAlert('Model evaluation completed', 'success');
-        updateStatus('Evaluation complete', 'success');
-        
-        showLoading(false);
+
+        const metrics = Array.isArray(result.results) ? result.results : [];
+        const bestModel = result.best_model || null;
+        displayMetrics(metrics, bestModel);
+
+        if (bestModel) {
+            const bestName = formatModelName(bestModel);
+            const rmse = formatMetric(bestModel.rmse);
+            const mae = formatMetric(bestModel.mae);
+            showAlert(`Best model for ${currentSymbol}: ${bestName} (RMSE ${rmse}, MAE ${mae})`, 'success');
+            updateStatus(`Best model | ${bestName}`, 'success');
+        } else {
+            showAlert('Model evaluation completed', 'success');
+            updateStatus('Evaluation complete', 'success');
+        }
     } catch (error) {
         showAlert('Failed to evaluate models: ' + error.message, 'error');
         updateStatus('Error', 'error');
@@ -209,32 +402,33 @@ function updateQuickStats(data) {
         document.getElementById('volume').textContent = '--';
         return;
     }
-    
+
     const latest = data[data.length - 1];
     const previous = data.length > 1 ? data[data.length - 2] : latest;
-    
+
     // Current price
     const currentPrice = latest.close;
     document.getElementById('current-price').textContent = `$${currentPrice.toFixed(2)}`;
-    
+
     // 24h change
     const change = ((currentPrice - previous.close) / previous.close * 100);
     const changeEl = document.getElementById('price-change');
     changeEl.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
     changeEl.className = `stat-value ${change >= 0 ? 'positive' : 'negative'}`;
-    
+
     // Volume
     const volume = latest.volume;
-    const volumeStr = volume >= 1e6 ? `${(volume / 1e6).toFixed(2)}M` : 
-                      volume >= 1e3 ? `${(volume / 1e3).toFixed(2)}K` : 
-                      volume.toFixed(0);
+    const volumeStr = volume >= 1e6 ? `${(volume / 1e6).toFixed(2)}M` :
+        volume >= 1e3 ? `${(volume / 1e3).toFixed(2)}K` :
+            volume.toFixed(0);
     document.getElementById('volume').textContent = volumeStr;
 }
 
 // Render candlestick chart with Plotly
 function renderCandlestickChart(historical, forecast, symbol, modelName = null) {
+    const forecastSeries = Array.isArray(forecast) ? forecast : [];
     const traces = [];
-    
+
     // Historical candlestick
     if (historical && historical.length > 0) {
         traces.push({
@@ -245,65 +439,73 @@ function renderCandlestickChart(historical, forecast, symbol, modelName = null) 
             low: historical.map(d => d.low),
             close: historical.map(d => d.close),
             name: 'Historical',
-            increasing: { 
-                line: { color: '#10b981', width: 1.5 },
-                fillcolor: '#10b981'
+            increasing: {
+                line: { color: '#22c55e', width: 1.5 },
+                fillcolor: '#22c55e'
             },
-            decreasing: { 
+            decreasing: {
                 line: { color: '#ef4444', width: 1.5 },
                 fillcolor: '#ef4444'
             },
             whiskerwidth: 0.5,
         });
     }
-    
+
     // Forecast candlesticks
-    if (forecast && forecast.length > 0) {
+    if (forecastSeries.length > 0) {
+        const getForecastValues = (key) => forecastSeries.map((item) => {
+            if (item[key] !== undefined) {
+                return item[key];
+            }
+            const fallback = key.replace('predicted_', '');
+            return item[fallback];
+        });
+
         traces.push({
             type: 'candlestick',
-            x: forecast.map(d => d.date),
-            open: forecast.map(d => d.predicted_open),
-            high: forecast.map(d => d.predicted_high),
-            low: forecast.map(d => d.predicted_low),
-            close: forecast.map(d => d.predicted_close),
+            x: forecastSeries.map(d => d.date),
+            open: getForecastValues('predicted_open'),
+            high: getForecastValues('predicted_high'),
+            low: getForecastValues('predicted_low'),
+            close: getForecastValues('predicted_close'),
             name: 'Forecast',
-            increasing: { 
-                line: { color: '#667eea', width: 2 },
-                fillcolor: 'rgba(102, 126, 234, 0.3)'
+            increasing: {
+                line: { color: '#8b5cf6', width: 2 },
+                fillcolor: 'rgba(139, 92, 246, 0.25)'
             },
-            decreasing: { 
-                line: { color: '#764ba2', width: 2 },
-                fillcolor: 'rgba(118, 75, 162, 0.3)'
+            decreasing: {
+                line: { color: '#7c3aed', width: 2 },
+                fillcolor: 'rgba(124, 58, 237, 0.25)'
             },
             whiskerwidth: 0.8,
         });
-        
+
         // Add confidence interval
-        if (forecast[0].confidence_lower !== undefined) {
+        if (forecastSeries[0].confidence_lower !== undefined) {
             traces.push({
                 type: 'scatter',
                 mode: 'lines',
-                x: forecast.map(d => d.date),
-                y: forecast.map(d => d.confidence_upper),
+                x: forecastSeries.map(d => d.date),
+                y: forecastSeries.map(d => d.confidence_upper),
                 name: 'Upper Bound',
                 line: {
-                    color: 'rgba(102, 126, 234, 0.3)',
+                    color: 'rgba(139, 92, 246, 0.35)',
                     width: 1,
                     dash: 'dot'
                 },
                 showlegend: false
             });
-            
+
             traces.push({
                 type: 'scatter',
                 mode: 'lines',
-                x: forecast.map(d => d.date),
-                y: forecast.map(d => d.confidence_lower),
+                x: forecastSeries.map(d => d.date),
+                y: forecastSeries.map(d => d.confidence_lower),
                 name: 'Confidence Interval',
                 fill: 'tonexty',
-                fillcolor: 'rgba(102, 126, 234, 0.1)',
+                fillcolor: 'rgba(139, 92, 246, 0.08)',
                 line: {
-                    color: 'rgba(102, 126, 234, 0.3)',
+                    color: 'rgba(139, 92, 246, 0.35)',
                     width: 1,
                     dash: 'dot'
                 },
@@ -311,30 +513,38 @@ function renderCandlestickChart(historical, forecast, symbol, modelName = null) 
             });
         }
     }
-    
+
     // Update chart title
     const titleEl = document.getElementById('chart-title');
-    if (modelName) {
-        titleEl.textContent = `${symbol} - Forecast using ${modelName}`;
-    } else {
-        titleEl.textContent = `${symbol} - Price Chart`;
+    if (titleEl) {
+        const pieces = [`${symbol} Price Chart`];
+        if (modelName) {
+            pieces.push(`Model: ${modelName}`);
+        }
+        if (forecastSeries.length > 0) {
+            const horizon = forecastSeries[forecastSeries.length - 1].horizon_hours;
+            if (horizon) {
+                pieces.push(`Horizon: ${horizon}h`);
+            }
+        }
+        titleEl.textContent = pieces.join(' | ');
     }
-    
+
     const layout = {
         xaxis: {
             title: 'Date',
             rangeslider: { visible: false },
             type: 'date',
-            gridcolor: '#e2e8f0',
+            gridcolor: '#232743',
             showgrid: true
         },
         yaxis: {
             title: 'Price (USD)',
-            gridcolor: '#e2e8f0',
+            gridcolor: '#232743',
             showgrid: true
         },
-        plot_bgcolor: '#f8fafc',
-        paper_bgcolor: 'white',
+        plot_bgcolor: '#141627',
+        paper_bgcolor: '#0d1020',
         height: 500,
         margin: { t: 20, b: 50, l: 60, r: 30 },
         showlegend: true,
@@ -344,17 +554,18 @@ function renderCandlestickChart(historical, forecast, symbol, modelName = null) 
             y: 1.02,
             xanchor: 'right',
             x: 1,
-            bgcolor: 'rgba(255,255,255,0.8)',
-            bordercolor: '#e2e8f0',
+            bgcolor: 'rgba(13,16,32,0.85)',
+            bordercolor: '#232743',
             borderwidth: 1
         },
         hovermode: 'x unified',
         font: {
             family: 'Inter, sans-serif',
-            size: 12
+            size: 12,
+            color: '#e5e7eb'
         }
     };
-    
+
     const config = {
         responsive: true,
         displayModeBar: true,
@@ -368,55 +579,68 @@ function renderCandlestickChart(historical, forecast, symbol, modelName = null) 
             scale: 2
         }
     };
-    
+
     Plotly.newPlot('candlestick-chart', traces, layout, config);
 }
 
 // Display model performance metrics
-function displayMetrics(results) {
+function displayMetrics(results, bestModel = null) {
     const metricsBody = document.getElementById('metrics-body');
     metricsBody.innerHTML = '';
-    
+
+    if (!Array.isArray(results) || results.length === 0) {
+        document.getElementById('metrics-container').style.display = 'none';
+        const summary = document.getElementById('metrics-summary');
+        if (summary) {
+            summary.style.display = 'none';
+        }
+        return;
+    }
+
     // Sort by RMSE (ascending - lower is better)
-    results.sort((a, b) => a.rmse - b.rmse);
-    
+    results.sort((a, b) => (a.rmse ?? Number.POSITIVE_INFINITY) - (b.rmse ?? Number.POSITIVE_INFINITY));
+
     results.forEach((result, index) => {
         const row = document.createElement('tr');
-        
-        // Determine model name
-        let modelName = 'Unknown';
-        if (result.parameters.window) {
-            modelName = `MA-${result.parameters.window}`;
-        } else if (result.parameters.order) {
-            modelName = `ARIMA (${result.parameters.order.join(',')})`;
-        } else if (result.parameters.trend) {
-            modelName = `Exp. Smoothing`;
-        } else if (result.parameters.lookback) {
-            modelName = result.parameters.units === 50 ? 'LSTM-50' : 'GRU-50';
-        }
-        
         const modelType = result.model_type === 'traditional' ? 'Traditional' : 'Neural';
         const typeClass = result.model_type === 'traditional' ? 'model-traditional' : 'model-neural';
-        
-        // Highlight best model
-        if (index === 0) {
-            row.style.background = 'rgba(102, 126, 234, 0.1)';
+        let isBest = index === 0;
+        if (bestModel) {
+            const namesMatch = bestModel.model_name && result.model_name && bestModel.model_name === result.model_name;
+            const typeMatch = bestModel.model_type && bestModel.model_type === result.model_type;
+            const rmseClose = Math.abs((bestModel.rmse ?? 0) - (result.rmse ?? Number.POSITIVE_INFINITY)) < 1e-6;
+            isBest = (namesMatch && typeMatch) || rmseClose;
         }
-        
+
+        if (isBest) {
+            row.classList.add('best-model');
+        }
+
         row.innerHTML = `
-            <td><strong>${modelName}</strong></td>
+            <td><strong>${formatModelName(result)}</strong></td>
             <td><span class="${typeClass}">${modelType}</span></td>
-            <td>${result.rmse.toFixed(4)}</td>
-            <td>${result.mae.toFixed(4)}</td>
-            <td>${result.mape.toFixed(2)}%</td>
-            <td>${result.train_samples}</td>
-            <td>${result.test_samples}</td>
+            <td>${formatMetric(result.rmse)}</td>
+            <td>${formatMetric(result.mae)}</td>
+            <td>${formatMetric(result.mape, 2)}%</td>
+            <td>${result.train_samples ?? '--'}</td>
+            <td>${result.test_samples ?? '--'}</td>
         `;
-        
+
         metricsBody.appendChild(row);
     });
-    
+
     document.getElementById('metrics-container').style.display = 'block';
+
+    const summaryEl = document.getElementById('metrics-summary');
+    if (summaryEl) {
+        if (bestModel) {
+            summaryEl.textContent = `Best performing model: ${formatModelName(bestModel)} (RMSE ${formatMetric(bestModel.rmse)}, MAE ${formatMetric(bestModel.mae)}, MAPE ${formatMetric(bestModel.mape, 2)}%)`;
+            summaryEl.style.display = 'block';
+        } else {
+            summaryEl.style.display = 'none';
+            summaryEl.textContent = '';
+        }
+    }
 }
 
 // Show loading indicator
@@ -429,26 +653,28 @@ function showAlert(message, type = 'info') {
     // Remove existing alerts
     const existingAlerts = document.querySelectorAll('.alert');
     existingAlerts.forEach(alert => alert.remove());
-    
+
     const alert = document.createElement('div');
     alert.className = `alert alert-${type}`;
-    
+
     // Add icon
     const icons = {
-        success: '✓',
-        error: '✗',
-        warning: '⚠',
-        info: 'ℹ'
+        success: '[OK]',
+        error: '[ERR]',
+        warning: '[WARN]',
+        info: '[INFO]'
     };
-    
-    alert.innerHTML = `<span style="font-size:1.25rem">${icons[type] || 'ℹ'}</span> ${message}`;
-    
+
+    alert.innerHTML = `<span class="alert-icon">${icons[type] || '[INFO]'}</span> ${message}`;
+
     const container = document.getElementById('alert-container');
     container.appendChild(alert);
-    
+
     // Auto-remove after 5 seconds
     setTimeout(() => {
         alert.style.opacity = '0';
         setTimeout(() => alert.remove(), 300);
     }, 5000);
 }
+
+

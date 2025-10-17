@@ -8,6 +8,11 @@ echo   CS4063 Assignment 2
 echo ============================================================
 echo.
 
+REM Set MongoDB configuration
+set MONGO_URI=mongodb://localhost:27017/nlp
+set USE_MONGO=1
+set MONGO_DB=nlp
+
 REM Check if Python is installed
 python --version >nul 2>&1
 if errorlevel 1 (

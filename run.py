@@ -4,10 +4,17 @@ Main entry point for FinTech Forecasting Application.
 This script handles initial setup and starts the Flask server.
 """
 
+from __future__ import annotations
+
 import os
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
+
+from database.models import Database as SqliteDatabase
+from services.scheduler_service import PipelineScheduler
+
+scheduler: PipelineScheduler | None = None
 
 def check_database():
     """Check if database exists and has data."""
@@ -97,6 +104,7 @@ def check_dependencies():
 
 def main():
     """Main entry point."""
+    global scheduler
     load_dotenv('config.env')
     print("\n" + "=" * 60)
     print("  FinTech Forecasting Application")
@@ -110,6 +118,10 @@ def main():
     # Check database
     print("\nChecking database...")
     check_database()
+
+    # Start background scheduler for ingestion/training/evaluation
+    scheduler = PipelineScheduler(SqliteDatabase())
+    scheduler.start()
     
     # Start Flask app
     print("\n" + "=" * 60)
@@ -145,4 +157,7 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
         sys.exit(1)
+    finally:
+        if scheduler:
+            scheduler.shutdown()
 

@@ -3,6 +3,9 @@
 let currentSymbol = '';
 let historicalData = [];
 let forecastData = [];
+let errorSeries = [];
+let rollingMetrics = {};
+let portfolioState = null;
 
 function normalizeForecastEntries(entries) {
     if (!Array.isArray(entries)) {
@@ -253,6 +256,21 @@ function setupEventListeners() {
             loadHistoricalData(currentSymbol);
         }
     });
+
+    const ingestBtn = document.getElementById('ingest-btn');
+    if (ingestBtn) {
+        ingestBtn.addEventListener('click', triggerIngestion);
+    }
+
+    const trainBtn = document.getElementById('train-btn');
+    if (trainBtn) {
+        trainBtn.addEventListener('click', triggerTraining);
+    }
+
+    const rebalanceBtn = document.getElementById('rebalance-btn');
+    if (rebalanceBtn) {
+        rebalanceBtn.addEventListener('click', runPortfolioStrategy);
+    }
 }
 
 // Load historical data
@@ -273,6 +291,8 @@ async function loadHistoricalData(symbol) {
         historicalData = result.data;
         renderCandlestickChart(historicalData, [], symbol);
         updateQuickStats(historicalData);
+        loadMonitoringData(symbol);
+        loadPortfolioSummary();
 
         showAlert(`Loaded ${result.data.length} days of data for ${symbol}`, 'success');
         updateStatus('Data loaded', 'success');
@@ -328,6 +348,8 @@ async function generateForecast() {
             ? `${forecastData[forecastData.length - 1].horizon_hours}h`
             : `${horizonHours}h`;
         showAlert(`Forecast generated using ${modelLabel} | Horizon ${horizonLabel}`, 'success');
+        loadMonitoringData(currentSymbol);
+        loadPortfolioSummary();
         updateStatus(`Forecast ready (${modelLabel})`, 'success');
 
         showLoading(false);
@@ -385,6 +407,7 @@ async function evaluateModels() {
             showAlert('Model evaluation completed', 'success');
             updateStatus('Evaluation complete', 'success');
         }
+        loadMonitoringData(currentSymbol);
     } catch (error) {
         showAlert('Failed to evaluate models: ' + error.message, 'error');
         updateStatus('Error', 'error');
@@ -675,6 +698,243 @@ function showAlert(message, type = 'info') {
         alert.style.opacity = '0';
         setTimeout(() => alert.remove(), 300);
     }, 5000);
+}
+
+// Monitoring + portfolio helpers
+async function loadMonitoringData(symbol) {
+    if (!symbol) {
+        return;
+    }
+    const model = document.getElementById('model-select')?.value || 'arima';
+    try {
+        const [errorsRes, metricsRes] = await Promise.all([
+            fetch(`/api/errors/${encodeURIComponent(symbol)}?model=${encodeURIComponent(model)}`),
+            fetch(`/api/metrics/rolling/${encodeURIComponent(symbol)}`)
+        ]);
+        const errorsData = await errorsRes.json();
+        const metricsData = await metricsRes.json();
+        if (!errorsData.error) {
+            errorSeries = errorsData.errors || [];
+            renderErrorChart(symbol, errorSeries, model);
+        }
+        if (!metricsData.error) {
+            rollingMetrics = metricsData.metrics || {};
+            renderRollingMetrics(rollingMetrics);
+        }
+    } catch (error) {
+        console.warn('Monitoring data failed', error);
+    }
+}
+
+function renderErrorChart(symbol, series, model) {
+    const container = document.getElementById('error-chart');
+    if (!container) {
+        return;
+    }
+    if (!Array.isArray(series) || series.length === 0) {
+        container.innerHTML = '<p class="muted">No evaluated forecasts yet. Run the adaptive training or wait for new data.</p>';
+        return;
+    }
+    const x = series.map(item => item.forecast_date);
+    const y = series.map(item => item.error_pct ?? 0);
+    const trace = {
+        type: 'bar',
+        x,
+        y,
+        marker: {
+            color: y.map(value => value >= 0 ? '#f87171' : '#34d399')
+        },
+        name: 'Error %'
+    };
+    const layout = {
+        title: `Forecast Error (%) — ${symbol} (${model || 'all models'})`,
+        plot_bgcolor: '#141627',
+        paper_bgcolor: '#0d1020',
+        font: { color: '#e5e7eb' },
+        height: 260,
+        margin: { t: 40, l: 50, r: 20, b: 50 },
+        yaxis: { title: '% Error', gridcolor: '#1f2237' },
+        xaxis: { showgrid: false }
+    };
+    Plotly.newPlot('error-chart', [trace], layout, { displayModeBar: false, responsive: true });
+}
+
+function renderRollingMetrics(metrics) {
+    document.getElementById('metric-count').textContent = metrics.count ?? 0;
+    document.getElementById('metric-rmse').textContent = formatMetric(metrics.rmse);
+    document.getElementById('metric-mae').textContent = formatMetric(metrics.mae);
+    document.getElementById('metric-mape').textContent = metrics.mape !== undefined && metrics.mape !== null
+        ? `${formatMetric(metrics.mape, 2)}%` : '--';
+}
+
+async function loadPortfolioSummary() {
+    try {
+        const response = await fetch('/api/portfolio/summary');
+        const result = await response.json();
+        if (result.error) {
+            return;
+        }
+        portfolioState = result;
+        renderPortfolioSummary(result);
+    } catch (error) {
+        console.warn('Portfolio summary failed', error);
+    }
+}
+
+function renderPortfolioSummary(data) {
+    if (!data || !data.portfolio) {
+        return;
+    }
+    const portfolio = data.portfolio;
+    document.getElementById('portfolio-cash').textContent = `$${Number(portfolio.cash || 0).toFixed(2)}`;
+    document.getElementById('portfolio-equity').textContent = `$${Number(data.equity || 0).toFixed(2)}`;
+    document.getElementById('portfolio-returns').textContent = `${((data.returns || 0) * 100).toFixed(2)}%`;
+    document.getElementById('portfolio-sharpe').textContent = data.sharpe ? data.sharpe.toFixed(2) : '--';
+
+    const positionsBody = document.getElementById('positions-body');
+    positionsBody.innerHTML = '';
+    (data.positions || []).forEach((pos) => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td>${pos.symbol}</td>
+            <td>${Number(pos.quantity).toFixed(4)}</td>
+            <td>$${Number(pos.avg_price).toFixed(2)}</td>
+        `;
+        positionsBody.appendChild(row);
+    });
+    if ((data.positions || []).length === 0) {
+        const row = document.createElement('tr');
+        row.innerHTML = '<td colspan="3" class="muted">No active positions</td>';
+        positionsBody.appendChild(row);
+    }
+
+    const tradesBody = document.getElementById('trades-body');
+    tradesBody.innerHTML = '';
+    (data.trades || []).forEach((trade) => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td>${trade.created_at?.split('T')[0] ?? '--'}</td>
+            <td>${trade.symbol}</td>
+            <td>${trade.action}</td>
+            <td>${Number(trade.quantity).toFixed(4)}</td>
+            <td>$${Number(trade.price).toFixed(2)}</td>
+        `;
+        tradesBody.appendChild(row);
+    });
+    if ((data.trades || []).length === 0) {
+        const row = document.createElement('tr');
+        row.innerHTML = '<td colspan="5" class="muted">No trades executed yet</td>';
+        tradesBody.appendChild(row);
+    }
+
+    renderPortfolioChart(data.history || []);
+}
+
+function renderPortfolioChart(history) {
+    const container = document.getElementById('portfolio-equity-chart');
+    if (!container) {
+        return;
+    }
+    if (!Array.isArray(history) || history.length === 0) {
+        container.innerHTML = '<p class="muted">Run the strategy to generate equity history.</p>';
+        return;
+    }
+    const trace = {
+        type: 'scatter',
+        mode: 'lines',
+        x: history.map(item => item.snapshot_time),
+        y: history.map(item => item.equity),
+        line: { color: '#34d399', width: 2 },
+        name: 'Equity'
+    };
+    const layout = {
+        plot_bgcolor: '#141627',
+        paper_bgcolor: '#0d1020',
+        font: { color: '#e5e7eb' },
+        height: 260,
+        margin: { t: 10, l: 50, r: 20, b: 40 },
+        yaxis: { title: 'Equity ($)', gridcolor: '#1f2237' },
+        xaxis: { showgrid: false }
+    };
+    Plotly.newPlot('portfolio-equity-chart', [trace], layout, { displayModeBar: false, responsive: true });
+}
+
+async function triggerIngestion() {
+    const btn = document.getElementById('ingest-btn');
+    if (btn) btn.disabled = true;
+    try {
+        const payload = currentSymbol ? { symbol: currentSymbol } : {};
+        const response = await fetch('/api/ingest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+        if (result.error) {
+            showAlert(result.error, 'error');
+            return;
+        }
+        showAlert('Ingestion job triggered', 'success');
+        if (currentSymbol) {
+            loadHistoricalData(currentSymbol);
+        }
+    } catch (error) {
+        showAlert('Ingestion failed: ' + error.message, 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function triggerTraining() {
+    if (!currentSymbol) {
+        showAlert('Select a symbol to train', 'warning');
+        return;
+    }
+    const btn = document.getElementById('train-btn');
+    if (btn) btn.disabled = true;
+    const model = document.getElementById('model-select').value;
+    try {
+        const response = await fetch('/api/train', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                symbol: currentSymbol,
+                model,
+                mode: 'update',
+                activate: true
+            })
+        });
+        const result = await response.json();
+        if (result.error) {
+            showAlert(result.error, 'error');
+            return;
+        }
+        showAlert(`Training complete (version ${result.result?.version || 'latest'})`, 'success');
+        loadMonitoringData(currentSymbol);
+    } catch (error) {
+        showAlert('Training failed: ' + error.message, 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function runPortfolioStrategy() {
+    const btn = document.getElementById('rebalance-btn');
+    if (btn) btn.disabled = true;
+    try {
+        const response = await fetch('/api/portfolio/run', { method: 'POST' });
+        const result = await response.json();
+        if (result.error) {
+            showAlert(result.error, 'error');
+            return;
+        }
+        showAlert('Portfolio strategy executed', 'success');
+        renderPortfolioSummary(result.result || result);
+    } catch (error) {
+        showAlert('Portfolio update failed: ' + error.message, 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 

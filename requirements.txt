@@ -8,6 +8,7 @@ Werkzeug==3.0.1
 # Data Processing
 numpy==1.26.4
 pandas==2.2.2
+yfinance==0.2.38
 
 # Traditional Forecasting Models
 statsmodels==0.14.1
@@ -16,6 +17,9 @@ scipy==1.12.0
 # Neural Network Models (Deep Learning)
 tensorflow==2.15.0
 keras==2.15.0
+
+# Scheduling
+APScheduler==3.10.4
 
 # Database
 # SQLite is included with Python, no additional package needed

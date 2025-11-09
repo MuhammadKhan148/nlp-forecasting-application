@@ -17,7 +17,6 @@ load_dotenv('config.env')
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database.models import Database as SqliteDatabase
-import os
 from typing import Optional
 
 MONGO_URI = os.environ.get('MONGO_URI')
@@ -33,12 +32,16 @@ try:
 except Exception as e:
     # Fallback to SQLite on any error
     db = SqliteDatabase()
-from models.traditional_models import MovingAverageModel, ARIMAModel, ExponentialSmoothingModel
-from models.neural_models import LSTMModel, GRUModel, KERAS_AVAILABLE
+from models import get_traditional_factories, get_neural_factories, KERAS_AVAILABLE
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import json
+
+from services.adaptive_service import AdaptiveLearningService
+from services.evaluation_service import EvaluationService
+from services.ingestion_service import IngestionService
+from services.portfolio_service import PortfolioService
 
 app = Flask(__name__, 
             template_folder='../templates',
@@ -46,20 +49,13 @@ app = Flask(__name__,
 
 # db is initialized above via env-based selector
 
-# Available models
-TRADITIONAL_MODELS = {
-    'ma_5': lambda: MovingAverageModel(window=5),
-    'ma_10': lambda: MovingAverageModel(window=10),
-    'arima': lambda: ARIMAModel(order=(5, 1, 0)),
-    'exp_smooth': lambda: ExponentialSmoothingModel(trend='add')
-}
+TRADITIONAL_MODELS = get_traditional_factories()
+NEURAL_MODELS = get_neural_factories()
 
-NEURAL_MODELS = {}
-if KERAS_AVAILABLE:
-    NEURAL_MODELS = {
-        'lstm': lambda: LSTMModel(lookback=10, units=50),
-        'gru': lambda: GRUModel(lookback=10, units=50)
-    }
+adaptive_service = AdaptiveLearningService(db)
+evaluation_service = EvaluationService(db)
+ingestion_service = IngestionService(db)
+portfolio_service = PortfolioService(db)
 
 
 @app.route('/')
@@ -86,6 +82,73 @@ def health():
         return jsonify({'status': 'error', 'error': str(e)}), 500
 
 
+@app.route('/api/ingest', methods=['POST'])
+def trigger_ingestion():
+    """Manually trigger data ingestion."""
+    payload = request.json or {}
+    symbol = payload.get('symbol')
+    try:
+        if symbol:
+            result = ingestion_service.ingest(symbol)
+        else:
+            result = ingestion_service.ingest_all()
+        return jsonify({'status': 'ok', 'result': result})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/train', methods=['POST'])
+def trigger_training():
+    """Train or update a model version."""
+    data = request.json or {}
+    symbol = data.get('symbol')
+    model_name = data.get('model', 'arima')
+    mode = data.get('mode', 'full')
+    lookback = data.get('lookback')
+    activate = data.get('activate', True)
+
+    if not symbol:
+        return jsonify({'error': 'Symbol required'}), 400
+    try:
+        lookback_int = int(lookback) if lookback else None
+        result = adaptive_service.train(
+            symbol=symbol,
+            model_name=model_name,
+            mode=mode,
+            lookback=lookback_int,
+            activate=activate
+        )
+        return jsonify({'status': 'ok', 'result': result})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/models/versions')
+def list_model_versions():
+    """Return model version history for a symbol."""
+    symbol = request.args.get('symbol')
+    if not symbol:
+        return jsonify({'error': 'symbol query parameter required'}), 400
+    model_name = request.args.get('model')
+    versions = db.get_model_versions(symbol, model_name=model_name)
+    return jsonify({'symbol': symbol, 'versions': versions})
+
+
+@app.route('/api/models/activate', methods=['POST'])
+def activate_model_version():
+    data = request.json or {}
+    symbol = data.get('symbol')
+    model_name = data.get('model')
+    version = data.get('version')
+    if not all([symbol, model_name, version]):
+        return jsonify({'error': 'symbol, model, and version required'}), 400
+    try:
+        db.set_active_model_version(symbol, model_name, version)
+        return jsonify({'status': 'ok'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/symbols')
 def get_symbols():
     """Get available symbols."""
@@ -102,6 +165,36 @@ def get_historical(symbol):
     try:
         data = db.get_historical_data(symbol)
         return jsonify({'data': data})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/errors/<symbol>')
+def get_error_series(symbol):
+    """Return evaluated forecast errors for monitoring overlays."""
+    model_name = request.args.get('model')
+    try:
+        limit = int(request.args.get('limit', 100))
+    except ValueError:
+        limit = 100
+    try:
+        series = evaluation_service.error_series(symbol, model_name=model_name, limit=limit)
+        return jsonify({'symbol': symbol, 'errors': series})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/metrics/rolling/<symbol>')
+def get_rolling_metrics(symbol):
+    """Return rolling metrics summary for dashboards."""
+    try:
+        window = request.args.get('window')
+        window_int = int(window) if window else None
+    except ValueError:
+        window_int = None
+    try:
+        metrics = evaluation_service.rolling_metrics(symbol, window=window_int)
+        return jsonify({'symbol': symbol, 'metrics': metrics})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -141,25 +234,38 @@ def generate_forecast():
         steps = max(1, math.ceil(horizon_hours / 24))
         step_hours = round(horizon_hours / steps, 2)
         
-        # Select model (with graceful fallback for neural models if data is short)
-        if model_name in TRADITIONAL_MODELS:
-            model = TRADITIONAL_MODELS[model_name]()
-            model.fit(prices)
-            predictions, confidence = model.predict(steps=steps)
-        elif model_name in NEURAL_MODELS:
-            candidate = NEURAL_MODELS[model_name]()
-            required_len = getattr(candidate, 'lookback', 10) + 5
-            if len(prices) < required_len:
-                # Fallback to ARIMA when not enough data for neural nets
-                model = TRADITIONAL_MODELS['arima']()
+        version_meta = None
+        try:
+            loaded_model, version_meta = adaptive_service.load_active_model(symbol, model_name)
+        except Exception:
+            loaded_model = None
+
+        if loaded_model:
+            model = loaded_model
+            predictions, confidence = adaptive_service.predict_with_model(model, prices, steps)
+        else:
+            # Select model (with graceful fallback for neural models if data is short)
+            if model_name in TRADITIONAL_MODELS:
+                model = TRADITIONAL_MODELS[model_name]()
                 model.fit(prices)
                 predictions, confidence = model.predict(steps=steps)
+            elif model_name in NEURAL_MODELS:
+                candidate = NEURAL_MODELS[model_name]()
+                required_len = getattr(candidate, 'lookback', 10) + 5
+                if len(prices) < required_len:
+                    model = TRADITIONAL_MODELS['arima']()
+                    model.fit(prices)
+                    predictions, confidence = model.predict(steps=steps)
+                else:
+                    model = candidate
+                    model.fit(prices)
+                    predictions, confidence = model.predict(prices, steps=steps)
             else:
-                model = candidate
-                model.fit(prices)
-                predictions, confidence = model.predict(prices, steps=steps)
-        else:
-            return jsonify({'error': f'Unknown model: {model_name}'}), 400
+                return jsonify({'error': f'Unknown model: {model_name}'}), 400
+
+        model_version = version_meta.get('version') if version_meta else None
+        model_source = 'registry' if version_meta else 'adhoc'
+        model_display_name = getattr(model, 'name', model_name)
         
         # Generate forecast dates
         last_date_str = historical[-1]['date']
@@ -189,6 +295,7 @@ def generate_forecast():
                 'date': date,
                 'horizon_hours': horizon_hours,
                 'step_hours': step_hours,
+                'model_version': model_version,
                 'predicted_open': float(pred - volatility * 0.3),
                 'predicted_high': float(pred + volatility),
                 'predicted_low': float(pred - volatility),
@@ -209,7 +316,9 @@ def generate_forecast():
         
         return jsonify({
             'symbol': symbol,
-            'model': model.name,
+            'model': model_display_name,
+            'model_version': model_version,
+            'model_source': model_source,
             'horizon_hours': horizon_hours,
             'forecasts': forecasts
         })
@@ -339,12 +448,50 @@ def get_available_models():
     """Get list of available models."""
     models = {
         'traditional': list(TRADITIONAL_MODELS.keys()),
-        'neural': list(NEURAL_MODELS.keys()) if KERAS_AVAILABLE else []
+        'neural': list(NEURAL_MODELS.keys()) if KERAS_AVAILABLE else [],
+        'all': adaptive_service.get_available_models()
     }
     return jsonify(models)
 
 
+@app.route('/api/portfolio/summary')
+def portfolio_summary():
+    try:
+        data = portfolio_service.summary()
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/portfolio/run', methods=['POST'])
+def portfolio_run():
+    try:
+        data = portfolio_service.run_auto_strategy()
+        return jsonify({'status': 'ok', 'result': data})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/portfolio/trade', methods=['POST'])
+def portfolio_trade():
+    payload = request.json or {}
+    symbol = payload.get('symbol')
+    action = payload.get('action')
+    quantity = payload.get('quantity')
+    price = payload.get('price')
+    if not symbol or not action or not quantity:
+        return jsonify({'error': 'symbol, action, and quantity required'}), 400
+    try:
+        quantity = float(quantity)
+    except ValueError:
+        return jsonify({'error': 'quantity must be numeric'}), 400
+    try:
+        price_val = float(price) if price is not None else None
+        data = portfolio_service.manual_trade(symbol, action, quantity, price_val)
+        return jsonify({'status': 'ok', 'result': data})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
-
-

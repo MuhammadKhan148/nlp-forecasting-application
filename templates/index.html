@@ -112,6 +112,11 @@
                             Compare Models
                         </button>
                     </div>
+
+                    <div class="button-row">
+                        <button id="ingest-btn" class="btn btn-ghost">Ingest Latest Data</button>
+                        <button id="train-btn" class="btn btn-ghost">Adaptive Train</button>
+                    </div>
                 </div>
 
                 <!-- Quick Stats -->
@@ -179,6 +184,86 @@
                         </table>
                     </div>
                     <div id="metrics-summary" class="metrics-summary" style="display: none;"></div>
+                </div>
+
+                <div id="monitoring-card" class="card monitoring-card">
+                    <div class="card-header">
+                        <h3 class="card-title">Continuous Monitoring</h3>
+                        <span class="muted">Rolling metrics and forecast error trends</span>
+                    </div>
+                    <div class="monitoring-grid">
+                        <div class="metric-pill">
+                            <span class="metric-label">Samples</span>
+                            <span class="metric-value" id="metric-count">0</span>
+                        </div>
+                        <div class="metric-pill">
+                            <span class="metric-label">Rolling RMSE</span>
+                            <span class="metric-value" id="metric-rmse">--</span>
+                        </div>
+                        <div class="metric-pill">
+                            <span class="metric-label">Rolling MAE</span>
+                            <span class="metric-value" id="metric-mae">--</span>
+                        </div>
+                        <div class="metric-pill">
+                            <span class="metric-label">Rolling MAPE</span>
+                            <span class="metric-value" id="metric-mape">--</span>
+                        </div>
+                    </div>
+                    <div id="error-chart" class="mini-chart"></div>
+                </div>
+
+                <div id="portfolio-card" class="card portfolio-card">
+                    <div class="portfolio-header">
+                        <h3 class="card-title">Portfolio Performance</h3>
+                        <div class="portfolio-actions">
+                            <button id="rebalance-btn" class="btn btn-secondary">Run Strategy</button>
+                        </div>
+                    </div>
+                    <div class="portfolio-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Cash</span>
+                            <span class="stat-value" id="portfolio-cash">--</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Equity</span>
+                            <span class="stat-value" id="portfolio-equity">--</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Returns</span>
+                            <span class="stat-value" id="portfolio-returns">--</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Sharpe</span>
+                            <span class="stat-value" id="portfolio-sharpe">--</span>
+                        </div>
+                    </div>
+                    <div id="portfolio-equity-chart" class="mini-chart"></div>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Symbol</th>
+                                    <th>Quantity</th>
+                                    <th>Avg. Price</th>
+                                </tr>
+                            </thead>
+                            <tbody id="positions-body"></tbody>
+                        </table>
+                    </div>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Symbol</th>
+                                    <th>Action</th>
+                                    <th>Qty</th>
+                                    <th>Price</th>
+                                </tr>
+                            </thead>
+                            <tbody id="trades-body"></tbody>
+                        </table>
+                    </div>
                 </div>
             </main>
         </div>

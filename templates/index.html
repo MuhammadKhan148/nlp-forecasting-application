@@ -205,10 +205,34 @@
                     <div class="card-header">
                         <h3 class="card-title">Latest Training Result</h3>
                         <span class="muted">Model registry status and metrics</span>
+                        <div style="margin-left:auto;">
+                            <button id="versions-refresh-btn" class="btn btn-ghost" title="Show all versions for the selected symbol/model">Show Versions</button>
+                        </div>
                     </div>
                     <div id="train-result-body" class="table-responsive">
                         <!-- Populated by JS after Adaptive Train -->
                     </div>
+                </div>
+
+                <div id="versions-card" class="card" style="display: none;">
+                    <div class="card-header">
+                        <h3 class="card-title">Model Versions</h3>
+                        <span class="muted">Activate a specific version</span>
+                        <div style="margin-left:auto; display:flex; gap:8px; align-items:center;">
+                            <button id="versions-load-btn" class="btn btn-ghost" title="Refresh versions list">Refresh</button>
+                        </div>
+                    </div>
+                    <div class="table-responsive" id="versions-body">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+
+                <div id="forecast-result-card" class="card" style="display: none;">
+                    <div class="card-header">
+                        <h3 class="card-title">Latest Forecast Info</h3>
+                        <span class="muted">Source and version used</span>
+                    </div>
+                    <div id="forecast-result-body" class="table-responsive"></div>
                 </div>
 
                 <div id="monitoring-card" class="card monitoring-card">
@@ -235,6 +259,10 @@
                         </div>
                     </div>
                     <div id="error-chart" class="mini-chart"></div>
+                    <p class="muted" style="margin-top:8px; font-size:12px;">
+                        Note: Samples can be 0 initially. Evaluation runs periodically and only after forecasts reach their target dates.
+                        To demo faster, use a short horizon (e.g., 1h) and wait for the evaluator.
+                    </p>
                 </div>
 
                 <div id="portfolio-card" class="card portfolio-card">

@@ -286,6 +286,30 @@ function setupEventListeners() {
             el.addEventListener('click', () => showStepHelp(step));
         }
     });
+
+    // Versions controls
+    const versionsLoadBtn = document.getElementById('versions-load-btn');
+    if (versionsLoadBtn) {
+        versionsLoadBtn.addEventListener('click', () => {
+            const model = document.getElementById('model-select')?.value;
+            if (!currentSymbol || !model) {
+                showAlert('Select a symbol and model first', 'warning');
+                return;
+            }
+            loadVersions(currentSymbol, model);
+        });
+    }
+    const versionsRefreshBtn = document.getElementById('versions-refresh-btn');
+    if (versionsRefreshBtn) {
+        versionsRefreshBtn.addEventListener('click', () => {
+            const model = document.getElementById('model-select')?.value;
+            if (!currentSymbol || !model) {
+                showAlert('Select a symbol and model first', 'warning');
+                return;
+            }
+            loadVersions(currentSymbol, model);
+        });
+    }
 }
 
 // Load historical data
@@ -363,6 +387,14 @@ async function generateForecast() {
             ? `${forecastData[forecastData.length - 1].horizon_hours}h`
             : `${horizonHours}h`;
         showAlert(`Forecast generated using ${modelLabel} | Horizon ${horizonLabel}`, 'success', { duration: 30000 });
+        // Show forecast response details in UI (no DevTools needed)
+        renderForecastInfo({
+            symbol: currentSymbol,
+            model: result.model,
+            model_version: result.model_version,
+            model_source: result.model_source,
+            horizon_hours: result.horizon_hours
+        });
         showAlert(
             `<strong>What to do next</strong><br>
             - Inspect the purple forecast overlay and confidence band on the chart.<br>
@@ -1092,11 +1124,11 @@ async function runPortfolioStrategy() {
 // Demo guide helper
 function showStepHelp(step) {
     const messages = {
-        forecast: 'Generate Forecast: Fits or loads the active model for the selected symbol and horizon, saves forecasts to the database, and overlays the purple forecast with confidence bands on the candlestick chart. After running, scroll to the main chart to view the overlay.',
-        compare: 'Compare Models: Benchmarks all models on a holdout window and displays RMSE/MAE/MAPE in the table. The best model is highlighted at the top. Use this to justify your model choice during the demo.',
-        train: 'Adaptive Train: Trains a new model version (rolling update) and activates it. You will not see an immediate chart change; the effect appears on the next forecast which will show model_source=registry and the new model_version.',
-        strategy: 'Run Strategy: Executes the portfolio auto strategy based on predicted vs current prices. If thresholds are met, it will buy/sell, update positions, and refresh the equity curve and performance metrics.',
-        monitor: 'Monitoring: Shows rolling RMSE/MAE/MAPE and a forecast error chart. Samples increase after evaluated forecasts exist (e.g., when the evaluation job runs and actual prices become available).'
+        forecast: '<strong>Generate Forecast</strong><br><em>Do</em>: Pick symbol/model/horizon → Generate Forecast.<br><em>Expect</em>: Purple forecast + confidence band.<br><em>Verify</em>: See the “Latest Forecast Info” card for model_source and model_version.',
+        compare: '<strong>Compare Models</strong><br><em>Do</em>: Click Compare Models.<br><em>Expect</em>: RMSE/MAE/MAPE table with the best row highlighted.<br><em>Verify</em>: Values reflect the latest /api/evaluate run.',
+        train: '<strong>Adaptive Train</strong><br><em>Do</em>: Click Adaptive Train.<br><em>Expect</em>: New version saved and activated; see “Latest Training Result.”<br><em>Verify</em>: “Model Versions” shows Active=Yes for the latest version; next forecast uses it.',
+        strategy: '<strong>Run Strategy</strong><br><em>Do</em>: Click Run Strategy after forecasting.<br><em>Expect</em>: Trades appear if thresholds crossed; positions/equity update.<br><em>Verify</em>: Positions/Trades tables and equity chart update.',
+        monitor: '<strong>Monitoring</strong><br><em>Why Samples=0?</em> Evaluations appear only after target dates and when the evaluator runs.<br><em>Do</em>: Use a short horizon (e.g., 1h) and keep the app running; Samples will increase and the error chart will fill.'
     };
     const targetIds = {
         forecast: 'candlestick-chart',
@@ -1113,4 +1145,109 @@ function showStepHelp(step) {
     }
 }
 
+// Utility + versions/forecast cards
+function safeFmt(x, digits = 4) {
+    if (x === null || x === undefined || Number.isNaN(Number(x))) return '--';
+    return Number(x).toFixed(digits);
+}
+
+async function loadVersions(symbol, model) {
+    try {
+        const res = await fetch(`/api/models/versions?symbol=${encodeURIComponent(symbol)}&model=${encodeURIComponent(model)}`);
+        const data = await res.json();
+        if (data.error) {
+            showAlert(data.error, 'error');
+            return;
+        }
+        renderVersions(symbol, model, data.versions || []);
+    } catch (e) {
+        showAlert('Failed to load versions: ' + e.message, 'error');
+    }
+}
+
+function renderVersions(symbol, model, versions) {
+    const card = document.getElementById('versions-card');
+    const body = document.getElementById('versions-body');
+    if (!card || !body) return;
+    if (!Array.isArray(versions) || versions.length === 0) {
+        body.innerHTML = '<p class="muted">No versions found for this model/symbol.</p>';
+        card.style.display = 'block';
+        return;
+    }
+    const rows = versions.map(v => {
+        const isActive = v.is_active ? 'Yes' : 'No';
+        const metrics = v.metrics || {};
+        const rmse = safeFmt(metrics.rmse);
+        const mae = safeFmt(metrics.mae);
+        const mape = (metrics.mape !== undefined && metrics.mape !== null) ? `${safeFmt(metrics.mape, 2)}%` : '--';
+        const btn = v.is_active ? '<span class="muted">Active</span>' :
+            `<button class="btn btn-secondary" data-version="${v.version}" data-symbol="${symbol}" data-model="${model}">Activate</button>`;
+        return `<tr>
+            <td>${v.version}</td>
+            <td>${isActive}</td>
+            <td>${rmse}</td>
+            <td>${mae}</td>
+            <td>${mape}</td>
+            <td>${v.train_start ?? '--'}</td>
+            <td>${v.train_end ?? '--'}</td>
+            <td>${btn}</td>
+        </tr>`;
+    }).join('');
+    body.innerHTML = `<table>
+        <thead>
+            <tr>
+                <th>Version</th><th>Active</th><th>RMSE</th><th>MAE</th><th>MAPE (%)</th><th>Train Start</th><th>Train End</th><th>Action</th>
+            </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+    </table>`;
+    body.querySelectorAll('button[data-version]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const version = btn.getAttribute('data-version');
+            const sym = btn.getAttribute('data-symbol');
+            const mdl = btn.getAttribute('data-model');
+            await activateVersion(sym, mdl, version);
+            await loadVersions(sym, mdl);
+        });
+    });
+    card.style.display = 'block';
+    if (typeof card.scrollIntoView === 'function') {
+        card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
+async function activateVersion(symbol, model, version) {
+    try {
+        const res = await fetch('/api/models/activate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol, model, version })
+        });
+        const data = await res.json();
+        if (data.error) {
+            showAlert('Activation failed: ' + data.error, 'error', { sticky: true });
+        } else {
+            showAlert(`Activated version ${version} for ${symbol} | ${prettifyModelLabel(model)}`, 'success', { duration: 15000 });
+        }
+    } catch (e) {
+        showAlert('Activation failed: ' + e.message, 'error', { sticky: true });
+    }
+}
+
+function renderForecastInfo(info) {
+    const card = document.getElementById('forecast-result-card');
+    const body = document.getElementById('forecast-result-body');
+    if (!card || !body || !info) return;
+    body.innerHTML = `<table>
+        <thead><tr><th>Symbol</th><th>Model</th><th>Source</th><th>Version</th><th>Horizon (h)</th></tr></thead>
+        <tbody><tr>
+            <td>${info.symbol ?? '--'}</td>
+            <td>${formatModelName(info.model ?? '')}</td>
+            <td>${info.model_source ?? '--'}</td>
+            <td>${info.model_version ?? '--'}</td>
+            <td>${info.horizon_hours ?? '--'}</td>
+        </tr></tbody>
+    </table>`;
+    card.style.display = 'block';
+}
 

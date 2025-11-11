@@ -271,6 +271,21 @@ function setupEventListeners() {
     if (rebalanceBtn) {
         rebalanceBtn.addEventListener('click', runPortfolioStrategy);
     }
+
+    // Help buttons (demo guide)
+    const helpMap = {
+        'help-forecast': 'forecast',
+        'help-compare': 'compare',
+        'help-train': 'train',
+        'help-strategy': 'strategy',
+        'help-monitor': 'monitor'
+    };
+    Object.entries(helpMap).forEach(([id, step]) => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('click', () => showStepHelp(step));
+        }
+    });
 }
 
 // Load historical data
@@ -347,7 +362,16 @@ async function generateForecast() {
         const horizonLabel = forecastData.length > 0 && forecastData[forecastData.length - 1].horizon_hours
             ? `${forecastData[forecastData.length - 1].horizon_hours}h`
             : `${horizonHours}h`;
-        showAlert(`Forecast generated using ${modelLabel} | Horizon ${horizonLabel}`, 'success');
+        showAlert(`Forecast generated using ${modelLabel} | Horizon ${horizonLabel}`, 'success', { duration: 30000 });
+        showAlert(
+            `<strong>What to do next</strong><br>
+            - Inspect the purple forecast overlay and confidence band on the chart.<br>
+            - Optionally click <em>Compare Models</em> to benchmark RMSE/MAE/MAPE.<br>
+            <strong>How to verify</strong><br>
+            - Open DevTools → Network → /api/forecast → response should include <em>model_source</em> and <em>model_version</em> (if using registry).`,
+            'info',
+            { sticky: true }
+        );
         loadMonitoringData(currentSymbol);
         loadPortfolioSummary();
         updateStatus(`Forecast ready (${modelLabel})`, 'success');
@@ -401,10 +425,19 @@ async function evaluateModels() {
             const bestName = formatModelName(bestModel);
             const rmse = formatMetric(bestModel.rmse);
             const mae = formatMetric(bestModel.mae);
-            showAlert(`Best model for ${currentSymbol}: ${bestName} (RMSE ${rmse}, MAE ${mae})`, 'success');
+            showAlert(`Best model for ${currentSymbol}: ${bestName} (RMSE ${rmse}, MAE ${mae})`, 'success', { duration: 30000 });
+            showAlert(
+                `<strong>What to do next</strong><br>
+                - Consider selecting this model for forecasting.<br>
+                - Use <em>Adaptive Train</em> to version and activate it for continuous use.<br>
+                <strong>How to verify</strong><br>
+                - Metrics table shows the best model highlighted; values align with /api/evaluate response.`,
+                'info',
+                { sticky: true }
+            );
             updateStatus(`Best model | ${bestName}`, 'success');
         } else {
-            showAlert('Model evaluation completed', 'success');
+            showAlert('Model evaluation completed', 'success', { duration: 30000 });
             updateStatus('Evaluation complete', 'success');
         }
         loadMonitoringData(currentSymbol);
@@ -671,8 +704,10 @@ function showLoading(show) {
     document.getElementById('loading').style.display = show ? 'block' : 'none';
 }
 
-// Show alert message
-function showAlert(message, type = 'info') {
+// Show alert message (supports sticky + duration + close button)
+function showAlert(message, type = 'info', options = {}) {
+    const { duration = 30000, sticky = false } = options;
+
     // Remove existing alerts
     const existingAlerts = document.querySelectorAll('.alert');
     existingAlerts.forEach(alert => alert.remove());
@@ -688,16 +723,32 @@ function showAlert(message, type = 'info') {
         info: '[INFO]'
     };
 
-    alert.innerHTML = `<span class="alert-icon">${icons[type] || '[INFO]'}</span> ${message}`;
+    // Build content
+    const content = document.createElement('span');
+    content.innerHTML = `<span class="alert-icon">${icons[type] || '[INFO]'}</span> ${message}`;
+
+    // Close button
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '×';
+    closeBtn.setAttribute('aria-label', 'Close');
+    closeBtn.style.cssText = 'margin-left:auto;background:transparent;border:none;color:#e5e7eb;font-size:16px;cursor:pointer;';
+    closeBtn.addEventListener('click', () => {
+        alert.style.opacity = '0';
+        setTimeout(() => alert.remove(), 200);
+    });
+
+    alert.appendChild(content);
+    alert.appendChild(closeBtn);
 
     const container = document.getElementById('alert-container');
     container.appendChild(alert);
 
-    // Auto-remove after 5 seconds
-    setTimeout(() => {
-        alert.style.opacity = '0';
-        setTimeout(() => alert.remove(), 300);
-    }, 5000);
+    if (!sticky && duration > 0) {
+        setTimeout(() => {
+            alert.style.opacity = '0';
+            setTimeout(() => alert.remove(), 300);
+        }, duration);
+    }
 }
 
 // Monitoring + portfolio helpers
@@ -874,7 +925,15 @@ async function triggerIngestion() {
             showAlert(result.error, 'error');
             return;
         }
-        showAlert('Ingestion job triggered', 'success');
+        showAlert('Ingestion job triggered', 'success', { duration: 30000 });
+        showAlert(
+            `<strong>What to expect</strong><br>
+            - Historical prices will refresh; monitoring and strategy use latest data.<br>
+            <strong>How to verify</strong><br>
+            - Chart reloads; DevTools → Network shows <em>/api/ingest</em> 200 OK.`,
+            'info',
+            { sticky: true }
+        );
         if (currentSymbol) {
             loadHistoricalData(currentSymbol);
         }
@@ -909,13 +968,96 @@ async function triggerTraining() {
             showAlert(result.error, 'error');
             return;
         }
-        showAlert(`Training complete (version ${result.result?.version || 'latest'})`, 'success');
+        showAlert(`Training complete (version ${result.result?.version || 'latest'})`, 'success', { duration: 30000 });
+        showAlert(
+            `<strong>What to do next</strong><br>
+            - Click <em>Generate Forecast</em> again; it will use the new active version.<br>
+            <strong>How to verify</strong><br>
+            - DevTools → Network → /api/forecast → shows <em>model_source: "registry"</em> and new <em>model_version</em>.<br>
+            <strong>If errors</strong><br>
+            - Ensure at least 10 data points exist; review /api/train response for details.`,
+            'info',
+            { sticky: true }
+        );
+        try {
+            // Show the training response in the UI card
+            renderTrainingResult(result.result);
+            // Pull registry versions to show active flag and dates
+            const verRes = await fetch(`/api/models/versions?symbol=${encodeURIComponent(currentSymbol)}&model=${encodeURIComponent(model)}`);
+            const verData = await verRes.json();
+            if (!verData.error) {
+                renderTrainingResult(result.result, verData.versions || []);
+            }
+        } catch (e) {
+            console.warn('Unable to render training result', e);
+        }
         loadMonitoringData(currentSymbol);
     } catch (error) {
-        showAlert('Training failed: ' + error.message, 'error');
+        showAlert('Training failed: ' + error.message + '<br><strong>Check</strong>: DevTools → Network → /api/train and server logs.', 'error', { sticky: true });
     } finally {
         if (btn) btn.disabled = false;
     }
+}
+
+function safeFmt(x, digits = 4) {
+    if (x === null || x === undefined || Number.isNaN(Number(x))) return '--';
+    return Number(x).toFixed(digits);
+}
+
+function renderTrainingResult(data, versions) {
+    const card = document.getElementById('train-result-card');
+    const body = document.getElementById('train-result-body');
+    if (!card || !body || !data) {
+        return;
+    }
+    let registryRow = null;
+    if (Array.isArray(versions) && versions.length > 0) {
+        registryRow = versions.find(v => String(v.version) === String(data.version)) || versions[0];
+    }
+    const symbol = data.symbol || currentSymbol || '--';
+    const model = data.model || document.getElementById('model-select')?.value || '--';
+    const version = data.version || '--';
+    const rmse = safeFmt(data.metrics?.rmse);
+    const mae = safeFmt(data.metrics?.mae);
+    const mape = (data.metrics?.mape !== undefined && data.metrics?.mape !== null) ? `${safeFmt(data.metrics?.mape, 2)}%` : '--';
+    const isActive = registryRow ? (registryRow.is_active ? 'Yes' : 'No') : '--';
+    const trainStart = registryRow?.train_start ?? '--';
+    const trainEnd = registryRow?.train_end ?? '--';
+
+    body.innerHTML = `
+        <table>
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Model</th>
+                    <th>Version</th>
+                    <th>Active</th>
+                    <th>RMSE</th>
+                    <th>MAE</th>
+                    <th>MAPE (%)</th>
+                    <th>Train Start</th>
+                    <th>Train End</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>${symbol}</td>
+                    <td>${prettifyModelLabel(model)}</td>
+                    <td>${version}</td>
+                    <td>${isActive}</td>
+                    <td>${rmse}</td>
+                    <td>${mae}</td>
+                    <td>${mape}</td>
+                    <td>${trainStart}</td>
+                    <td>${trainEnd}</td>
+                </tr>
+            </tbody>
+        </table>
+        <p class="muted" style="margin-top: 6px; font-size: 12px;">
+            After training, generate a new forecast to use this version (the forecast response will include <em>model_source: "registry"</em> and <em>model_version</em>).
+        </p>
+    `;
+    card.style.display = 'block';
 }
 
 async function runPortfolioStrategy() {
@@ -928,12 +1070,46 @@ async function runPortfolioStrategy() {
             showAlert(result.error, 'error');
             return;
         }
-        showAlert('Portfolio strategy executed', 'success');
+        showAlert('Portfolio strategy executed', 'success', { duration: 30000 });
+        showAlert(
+            `<strong>What to expect</strong><br>
+            - If thresholds are crossed, trades appear and equity updates.<br>
+            <strong>How to verify</strong><br>
+            - Positions/Trades tables update; equity chart gets a new point; /api/portfolio/summary reflects changes.<br>
+            <strong>If nothing changes</strong><br>
+            - Thresholds not met; try another model/symbol or adjust thresholds in config.env.`,
+            'info',
+            { sticky: true }
+        );
         renderPortfolioSummary(result.result || result);
     } catch (error) {
-        showAlert('Portfolio update failed: ' + error.message, 'error');
+        showAlert('Portfolio update failed: ' + error.message + '<br><strong>Check</strong>: DevTools → Network → /api/portfolio/run and server logs.', 'error', { sticky: true });
     } finally {
         if (btn) btn.disabled = false;
+    }
+}
+
+// Demo guide helper
+function showStepHelp(step) {
+    const messages = {
+        forecast: 'Generate Forecast: Fits or loads the active model for the selected symbol and horizon, saves forecasts to the database, and overlays the purple forecast with confidence bands on the candlestick chart. After running, scroll to the main chart to view the overlay.',
+        compare: 'Compare Models: Benchmarks all models on a holdout window and displays RMSE/MAE/MAPE in the table. The best model is highlighted at the top. Use this to justify your model choice during the demo.',
+        train: 'Adaptive Train: Trains a new model version (rolling update) and activates it. You will not see an immediate chart change; the effect appears on the next forecast which will show model_source=registry and the new model_version.',
+        strategy: 'Run Strategy: Executes the portfolio auto strategy based on predicted vs current prices. If thresholds are met, it will buy/sell, update positions, and refresh the equity curve and performance metrics.',
+        monitor: 'Monitoring: Shows rolling RMSE/MAE/MAPE and a forecast error chart. Samples increase after evaluated forecasts exist (e.g., when the evaluation job runs and actual prices become available).'
+    };
+    const targetIds = {
+        forecast: 'candlestick-chart',
+        compare: 'metrics-container',
+        train: 'train-btn',
+        strategy: 'portfolio-card',
+        monitor: 'monitoring-card'
+    };
+    const text = messages[step] || 'This step provides guidance for the demo.';
+    showAlert(text, 'info', { sticky: true });
+    const target = document.getElementById(targetIds[step]);
+    if (target && typeof target.scrollIntoView === 'function') {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 }
 

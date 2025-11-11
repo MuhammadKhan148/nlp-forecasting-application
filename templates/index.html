@@ -97,14 +97,14 @@
                     </div>
 
                     <div class="button-group">
-                        <button id="forecast-btn" class="btn btn-primary">
+                        <button id="forecast-btn" class="btn btn-primary" title="Generate a new forecast for the selected symbol/model and horizon.">
                             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                                 <path
                                     d="M10.97 4.97a.75.75 0 011.07 1.05l-3.99 4.99a.75.75 0 01-1.08.02L4.324 8.384a.75.75 0 111.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 01.02-.022z" />
                             </svg>
                             Generate Forecast
                         </button>
-                        <button id="evaluate-btn" class="btn btn-secondary">
+                        <button id="evaluate-btn" class="btn btn-secondary" title="Benchmark all models on a holdout set to compare RMSE/MAE/MAPE.">
                             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                                 <path
                                     d="M1 2.5A1.5 1.5 0 012.5 1h3A1.5 1.5 0 017 2.5v3A1.5 1.5 0 015.5 7h-3A1.5 1.5 0 011 5.5v-3zm8 0A1.5 1.5 0 0110.5 1h3A1.5 1.5 0 0115 2.5v3A1.5 1.5 0 0113.5 7h-3A1.5 1.5 0 019 5.5v-3zm-8 8A1.5 1.5 0 012.5 9h3A1.5 1.5 0 017 10.5v3A1.5 1.5 0 015.5 15h-3A1.5 1.5 0 011 13.5v-3zm8 0A1.5 1.5 0 0110.5 9h3a1.5 1.5 0 011.5 1.5v3a1.5 1.5 0 01-1.5 1.5h-3A1.5 1.5 0 019 13.5v-3z" />
@@ -114,8 +114,8 @@
                     </div>
 
                     <div class="button-row">
-                        <button id="ingest-btn" class="btn btn-ghost">Ingest Latest Data</button>
-                        <button id="train-btn" class="btn btn-ghost">Adaptive Train</button>
+                        <button id="ingest-btn" class="btn btn-ghost" title="Fetch latest prices for configured symbols.">Ingest Latest Data</button>
+                        <button id="train-btn" class="btn btn-ghost" title="Train a new version of the selected model (rolling update) and activate it.">Adaptive Train</button>
                     </div>
                 </div>
 
@@ -136,6 +136,21 @@
                             <span class="stat-value" id="volume">--</span>
                         </div>
                     </div>
+                </div>
+
+                <!-- Demo Guide -->
+                <div class="card" style="margin-top: 16px;">
+                    <h3 class="card-title">Demo Guide</h3>
+                    <div style="display:flex; flex-wrap: wrap; gap: 8px;">
+                        <button id="help-forecast" class="btn btn-ghost" title="What happens when you generate a forecast?">1) Forecast</button>
+                        <button id="help-compare" class="btn btn-ghost" title="How model comparison works and what the metrics mean.">2) Compare</button>
+                        <button id="help-train" class="btn btn-ghost" title="What Adaptive Train does and how to verify it worked.">3) Train</button>
+                        <button id="help-strategy" class="btn btn-ghost" title="How the portfolio strategy trades and what metrics update.">4) Strategy</button>
+                        <button id="help-monitor" class="btn btn-ghost" title="How monitoring updates and why Samples may be zero initially.">5) Monitoring</button>
+                    </div>
+                    <p class="muted" style="margin-top: 8px; font-size: 12px;">
+                        Click a step to see a brief explanation and where to look in the UI.
+                    </p>
                 </div>
             </aside>
 
@@ -184,6 +199,16 @@
                         </table>
                     </div>
                     <div id="metrics-summary" class="metrics-summary" style="display: none;"></div>
+                </div>
+
+                <div id="train-result-card" class="card" style="display: none;">
+                    <div class="card-header">
+                        <h3 class="card-title">Latest Training Result</h3>
+                        <span class="muted">Model registry status and metrics</span>
+                    </div>
+                    <div id="train-result-body" class="table-responsive">
+                        <!-- Populated by JS after Adaptive Train -->
+                    </div>
                 </div>
 
                 <div id="monitoring-card" class="card monitoring-card">
